@@ -31,37 +31,43 @@ def allowed_file(filename):
 
 
 def is_heatmap(img):
+    """Detect heatmap based on presence of heatmap colors."""
     img_hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-
-    # Define common heatmap colors in HSV
     color_ranges = {
-        "red1": ((0, 50, 50), (10, 255, 255)),
-        "red2": ((170, 50, 50), (180, 255, 255)),
-        "yellow": ((20, 50, 50), (35, 255, 255)),
-        "green": ((40, 50, 50), (85, 255, 255)),
-        "blue": ((90, 50, 50), (130, 255, 255))
+        "red1": ((0, 100, 100), (10, 255, 255)),
+        "red2": ((160, 100, 100), (179, 255, 255)),
+        "yellow": ((20, 100, 100), (30, 255, 255)),
+        "green": ((40, 50, 50), (80, 255, 255)),
+        "blue": ((90, 50, 50), (130, 255, 255)),
     }
-
     found_colors = 0
     for _, (low, high) in color_ranges.items():
         mask = cv2.inRange(img_hsv, np.array(low), np.array(high))
-        ratio = cv2.countNonZero(mask) / img.size
-        if ratio > 0.01:
+        if cv2.countNonZero(mask) > 500:
             found_colors += 1
+    return found_colors >= 2
 
-    if found_colors < 4:
-        return False
 
-    avg_saturation = np.mean(img_hsv[:, :, 1])
-    if avg_saturation < 100:
-        return False
+def estimate_co2_emissions(img):
+    """Estimate CO₂ emissions based on red/yellow hot zones."""
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    red_lower1 = np.array([0, 100, 100])
+    red_upper1 = np.array([10, 255, 255])
+    red_lower2 = np.array([160, 100, 100])
+    red_upper2 = np.array([179, 255, 255])
+    yellow_lower = np.array([20, 100, 100])
+    yellow_upper = np.array([30, 255, 255])
 
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    laplacian_var = cv2.Laplacian(gray, cv2.CV_64F).var()
-    if laplacian_var > 150:
-        return False
+    red_mask = cv2.inRange(hsv, red_lower1, red_upper1) | cv2.inRange(hsv, red_lower2, red_upper2)
+    yellow_mask = cv2.inRange(hsv, yellow_lower, yellow_upper)
+    hot_mask = red_mask | yellow_mask
 
-    return True
+    hot_pixels = cv2.countNonZero(hot_mask)
+    total_pixels = img.shape[0] * img.shape[1]
+    hot_ratio = hot_pixels / total_pixels
+
+    co2_estimate = hot_ratio * 100  # scaling factor for demo
+    return round(co2_estimate, 2)
 
 
 def get_image_hash(img):
@@ -88,6 +94,7 @@ def check_heatmap():
         if img is None:
             return jsonify({"result": "error", "message": "Could not read image"}), 400
 
+        # Main detection
         if not is_heatmap(img):
             return jsonify({"result": "no"}), 200
 
@@ -100,14 +107,16 @@ def check_heatmap():
         with open(PICKLE_FILE, "wb") as f:
             pickle.dump(saved_data, f)
 
-        return jsonify({"result": "yes"}), 200
+        # If YES, calculate emissions
+        co2_value = estimate_co2_emissions(img)
+        return jsonify({"result": "yes", "estimated_CO2_Mt": co2_value}), 200
 
     return jsonify({"error": "Invalid file type"}), 400
 
 
 @app.route("/", methods=["GET"])
 def home():
-    return jsonify({"message": "Heatmap detection API running"})
+    return jsonify({"message": "Heatmap detection & CO₂ estimation API running"})
 
 
 if __name__ == "__main__":
