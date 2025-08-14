@@ -10,7 +10,8 @@ import tempfile
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg"}
 
 # --- Flask App Initialization ---
-app = Flask(_name) # CORRECTED: Changed _name to _name_
+# THE FIX IS HERE: It must be _name_ (with double underscores)
+app = Flask(_name_) 
 
 # --- Helper Functions ---
 
@@ -111,5 +112,8 @@ def home():
     return jsonify({"message": "Heatmap detection & CO₂ estimation API is running."})
 
 
+# This block is for local testing. Render uses the Gunicorn command from your settings.
 if _name_ == "_main_":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    # The port is often set by the hosting environment, so we check for it.
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
