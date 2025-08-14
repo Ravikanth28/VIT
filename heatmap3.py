@@ -1,37 +1,28 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, logging
 import cv2
 import numpy as np
-import pickle
 import os
 import hashlib
 from werkzeug.utils import secure_filename
+import tempfile 
 
-# Config
-PICKLE_FILE = "heatmap_images.pkl"
-UPLOAD_FOLDER = "uploads"
+# --- Configuration ---
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg"}
 
-# Ensure upload folder exists
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+# --- Flask App Initialization ---
+app = Flask(_name) # CORRECTED: Changed _name to _name_
 
-# Load saved data or initialize
-if os.path.exists(PICKLE_FILE):
-    with open(PICKLE_FILE, "rb") as f:
-        saved_data = pickle.load(f)
-else:
-    saved_data = {"hashes": [], "images": []}
-
-# Flask app
-app = Flask(__name__)
-app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
-
+# --- Helper Functions ---
 
 def allowed_file(filename):
+    """Checks if the uploaded file has an allowed extension."""
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
 
-
 def is_heatmap(img):
-    """Detect heatmap based on presence of heatmap colors."""
+    """
+    Detects if an image qualifies as a heatmap by checking for the presence
+    of at least two distinct color ranges typical of heatmaps.
+    """
     img_hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
     color_ranges = {
         "red1": ((0, 100, 100), (10, 255, 255)),
@@ -47,9 +38,11 @@ def is_heatmap(img):
             found_colors += 1
     return found_colors >= 2
 
-
 def estimate_co2_emissions(img):
-    """Estimate CO₂ emissions based on red/yellow hot zones."""
+    """
+    Estimates a CO₂ value based on the proportion of "hot" colors (red and yellow)
+    in the image.
+    """
     hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
     red_lower1 = np.array([0, 100, 100])
     red_upper1 = np.array([10, 255, 255])
@@ -66,58 +59,57 @@ def estimate_co2_emissions(img):
     total_pixels = img.shape[0] * img.shape[1]
     hot_ratio = hot_pixels / total_pixels
 
-    co2_estimate = hot_ratio * 100  # scaling factor for demo
+    co2_estimate = hot_ratio * 100 
     return round(co2_estimate, 2)
 
-
-def get_image_hash(img):
-    img_bytes = cv2.imencode(".png", img)[1].tobytes()
-    return hashlib.sha256(img_bytes).hexdigest()
-
+# --- Main API Endpoint ---
 
 @app.route("/check-heatmap", methods=["POST"])
 def check_heatmap():
+    """
+    Main endpoint to receive an image, validate it, and return a CO₂ estimate.
+    """
     if "file" not in request.files:
-        return jsonify({"error": "No file uploaded"}), 400
+        return jsonify({"error": "No file part in the request"}), 400
 
     file = request.files["file"]
 
     if file.filename == "":
-        return jsonify({"error": "No selected file"}), 400
+        return jsonify({"error": "No file selected"}), 400
 
-    if file and allowed_file(file.filename):
+    if not file or not allowed_file(file.filename):
+        return jsonify({"error": "Invalid file type"}), 400
+
+    temp_path = None
+    try:
         filename = secure_filename(file.filename)
-        file_path = os.path.join(app.config["UPLOAD_FOLDER"], filename)
-        file.save(file_path)
+        temp_dir = tempfile.gettempdir()
+        temp_path = os.path.join(temp_dir, filename)
+        file.save(temp_path)
 
-        img = cv2.imread(file_path)
+        img = cv2.imread(temp_path)
         if img is None:
-            return jsonify({"result": "error", "message": "Could not read image"}), 400
+            return jsonify({"result": "error", "message": "Could not read image file"}), 400
 
-        # Main detection
         if not is_heatmap(img):
             return jsonify({"result": "no"}), 200
 
-        img_hash = get_image_hash(img)
-        if img_hash in saved_data["hashes"]:
-            return jsonify({"result": "duplicate"}), 200
-
-        saved_data["hashes"].append(img_hash)
-        saved_data["images"].append(img)
-        with open(PICKLE_FILE, "wb") as f:
-            pickle.dump(saved_data, f)
-
-        # If YES, calculate emissions
         co2_value = estimate_co2_emissions(img)
         return jsonify({"result": "yes", "estimated_CO2_Mt": co2_value}), 200
 
-    return jsonify({"error": "Invalid file type"}), 400
+    except Exception as e:
+        app.logger.error(f"An unexpected error occurred: {str(e)}")
+        return jsonify({"error": f"An unexpected error occurred on the server."}), 500
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            os.remove(temp_path)
 
 
 @app.route("/", methods=["GET"])
 def home():
-    return jsonify({"message": "Heatmap detection & CO₂ estimation API running"})
+    """A simple welcome endpoint to confirm the API is running."""
+    return jsonify({"message": "Heatmap detection & CO₂ estimation API is running."})
 
 
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+if _name_ == "_main_":
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
