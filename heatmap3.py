@@ -11,7 +11,7 @@ ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg"}
 
 # --- Flask App Initialization ---
 # THE FIX IS HERE: It must be _name_ (with double underscores)
-app = Flask(_name_) 
+app = Flask(__name__) 
 
 # --- Helper Functions ---
 
@@ -113,7 +113,8 @@ def home():
 
 
 # This block is for local testing. Render uses the Gunicorn command from your settings.
-if _name_ == "_main_":
+if __name__ == "__main__":
     # The port is often set by the hosting environment, so we check for it.
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
+
